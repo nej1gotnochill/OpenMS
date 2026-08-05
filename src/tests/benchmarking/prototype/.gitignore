@@ -1,0 +1,6 @@
+# Generated artifacts — never commit
+logs/*
+!logs/.gitkeep
+outputs/*
+!outputs/.gitkeep
+.test-fixture/
