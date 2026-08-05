@@ -1,129 +1,47 @@
-# quantms Benchmark Prototype (Day 8)
+# quantms benchmark prototype
 
-A standalone, runnable **framework** for benchmarking the ProteoBench LFQ DDA
-Q Exactive dataset through [bigbio/quantms](https://github.com/bigbio/quantms).
+This is a prototype I've been using while exploring OpenMS Issue #8788
+(benchmark testing). The goal is to reproduce the bigbio/quantms workflow for
+the ProteoBench LFQ benchmark dataset *outside* Nextflow, so benchmark results
+can actually be compared before deciding how benchmarking should be integrated
+into OpenMS.
 
-This is the first prototype of the workflow behind OpenMS Issue #8788 /
-PR #9839. It deliberately does **not** implement the full workflow yet — no
-dataset bootstrap, no metric extraction, no baseline comparison. Those come in
-later milestones. Today's goal is a clean, extensible skeleton:
+It's intentionally small and not wired into the CMake/CTest build yet — that
+comes later, once the run itself is proven reproducible.
 
-```
-bootstrap (download → RAW→mzML → SDRF)     ← future (PR: dataset bootstrap)
-    ↓
-benchmark_quantms.sh
-    ├── 1. check_dependencies
-    ├── 2. validate_inputs
-    ├── 3. run_pipeline      (nextflow run . -profile dev,docker ...)
-    ├── 4. collect_outputs   (msstats CSV, mzTab, trace)
-    └── 5. generate_summary
-```
+## Why this exists
 
-## Purpose
+Timo asked for a reproducible quantms run (Comet + Percolator vs Comet +
+MS²Rescore) on the ProteoBench Q Exactive HF-X dataset. Before building
+anything into OpenMS proper, I want the run itself to be:
 
-- Run the quantms pipeline on a ProteoBench LFQ benchmark dataset with a
-  reproducible, versioned command.
-- Make the **rescoring experiment** Timo requested a one-flag switch:
-  `ENABLE_RESCORING=false` (Comet + Percolator) vs `true` (Comet + MS²Rescore
-  + Percolator).
-- Capture logs and the key deliverables (`*_msstats_in.csv`, mzTab,
-  execution trace) for later comparison / metric extraction.
-
-## Requirements
-
-| Tool | Why |
-|---|---|
-| [Nextflow](https://www.nextflow.io/) | runs the quantms pipeline |
-| Docker (or Podman) | container execution (`-profile docker`) |
-| Java 17+ | Nextflow runtime |
-| Python 3 | quantms auxiliary steps |
-| git | the quantms repo |
-
-The script checks all of these automatically (`check_dependencies`) and fails
-with a clear message if any are missing.
-
-**Also required but not yet automated:** the benchmark dataset (mzML + FASTA +
-SDRF) must exist on disk before the pipeline can execute. See
-[Inputs](#inputs).
-
-## Inputs
-
-| Item | Where | Status in prototype |
-|---|---|---|
-| `SDRF` | `config.env` → `SDRF` | validated (must exist) |
-| `FASTA` | `config.env` → `FASTA` | validated (must exist) |
-| mzML files | `config.env` → `MZML_DIR` (default: `DATASET_DIR`) | validated (dir + ≥1 `.mzML`) |
-| Output dir | `config.env` → `OUTDIR` | created + writability checked |
-| quantms repo | `config.env` → `QUANTMS_DIR` | used as `nextflow run <dir>` |
-
-Target dataset: **`quant_lfq_DDA_ion_QExactive`** (Q Exactive HF-X HYE,
-PXD028735) — 6 RAW files, mixed-species FASTA, ground truth log2FC
-**Human 0 / E. coli −2 / Yeast +1**. RAW→mzML conversion is a *future*
-bootstrap step, not part of this script.
-
-## Outputs
-
-| Output | Location |
-|---|---|
-| Run log | `logs/run.log` |
-| Pipeline stdout/stderr | `logs/quantms.log` |
-| Summary (config + command + exit) | `logs/summary.log` |
-| Collected deliverables | `outputs/` (`*_msstats_in.csv`, `.mzTab`, `execution_trace_*.txt`) |
-| Full quantms results | `OUTDIR` (from config) — mzTab, consensusXML, qpx parquet, `pipeline_info/` |
+- reproducible — same command, same parameters, recorded in a summary
+- comparable — the two rescoring paths toggled by one flag, same inputs
+- observable — everything logged, key outputs collected, no black box
 
 ## How to run
 
 ```bash
-# 1. Edit config.env — set QUANTMS_DIR, DATASET_DIR, MZML_DIR, FASTA, SDRF, OUTDIR
-
-# 2. Dry run (default): checks + validates + prints the command, does NOT execute
-bash benchmark_quantms.sh
-
-# 3. Real run, once the dataset is on disk
-#    set DRY_RUN="false" in config.env, then:
-bash benchmark_quantms.sh
-
-# 4. Run the MS²Rescore comparison (Path B)
-#    set ENABLE_RESCORING="true" in config.env, then re-run
+cp config.env.example config.env   # then edit the paths
+bash benchmark_quantms.sh          # dry run: dependency check + validation + prints the command
 ```
 
-Using a custom config without editing the default:
+Set `DRY_RUN=false` in config.env and re-run once the dataset is actually on
+disk. The script performs five steps:
 
-```bash
-bash benchmark_quantms.sh my_config.env
-```
+1. dependency check — nextflow, docker/podman, java, python, git
+2. input validation — SDRF, FASTA, mzML directory, writable output dir
+3. pipeline — generates the nextflow command, executes it only if `DRY_RUN=false`
+4. collect outputs — copies the msstats CSV, mzTab and execution trace into `outputs/`
+5. summary — writes what ran and with which settings to `logs/summary.log`
 
-## Key configuration
+`ENABLE_RESCORING=false` runs Comet + Percolator; `true` runs
+Comet + MS²Rescore + Percolator.
 
-| Variable | Meaning |
-|---|---|
-| `PROFILE` | Nextflow profiles, default `dev,docker` (Timo's requirement: current OpenMS dev container) |
-| `SEARCH_ENGINE` | default `comet` |
-| `ENABLE_RESCORING` | `false` → `--ms2features_enable false`; `true` → `--ms2features_enable true` |
-| `DRY_RUN` | `true` = print command only (default); `false` = execute |
-| `NEXTFLOW_EXTRA_ARGS` | e.g. `-resume` |
+## Status / limitations
 
-## Current limitations
-
-- **No dataset bootstrap** — downloads, RAW→mzML conversion, and SDRF
-  construction are not implemented (next milestone).
-- **Dry run by default** — the script never executes the pipeline until
-  `DRY_RUN=false`.
-- **No metric extraction or baseline comparison** — outputs are collected
-  only; ProteoBench scoring / epsilon / CV / missing values come later.
-- **No rescoring internals tuning** — `ENABLE_RESCORING` toggles
-  `ms2features_enable` only; MS²PIP/DeepLC parameters are not yet exposed.
-- Tested in Git Bash on Windows; POSIX paths (`/c/...`) recommended, Windows
-  paths (`C:\...`) are converted automatically when `cygpath` is available.
-
-## Structure
-
-```
-benchmark-prototype/
-├── benchmark_quantms.sh   # main script (5 steps, see above)
-├── config.env             # all configurable values
-├── README.md
-├── logs/                  # run.log, quantms.log, summary.log
-├── outputs/               # collected deliverables
-└── scripts/               # future helper scripts (bootstrap, metrics, ...)
-```
+- Dataset bootstrap (download, RAW→mzML, SDRF construction) is not
+  implemented yet — that's the next piece.
+- No metric extraction or baseline comparison yet; it only collects outputs.
+- `config.env` is gitignored by design (machine-specific paths); the tracked
+  `config.env.example` holds placeholders.

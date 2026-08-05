@@ -4,3 +4,6 @@ logs/*
 outputs/*
 !outputs/.gitkeep
 .test-fixture/
+
+# Machine-specific config — copy config.env.example instead
+config.env
